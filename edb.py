@@ -61,7 +61,7 @@ def cmd_sleep(mon, time_sec):
 
 def cmd_attach(mon):
     global monitor
-    monitor = edb.WispMonitor()
+    monitor = edb.EDB()
 
 def cmd_detach(mon):
     mon.destroy()
