@@ -14,7 +14,7 @@ parser = argparse.ArgumentParser(
             description="EDB Console")
 parser.add_argument('--command', '-c',
             help="Run the given command and exit")
-parser.add_argument('--stdio', '-o', default="-",
+parser.add_argument('--stdio', '-o',
             help="File to which to pipe std I/O data relayed from target (default: console)")
 args = parser.parse_args()
 
