@@ -14,14 +14,17 @@ parser = argparse.ArgumentParser(
             description="EDB Console")
 parser.add_argument('--command', '-c',
             help="Run the given command and exit")
+parser.add_argument('--stdio', '-o', default="-",
+            help="File to which to pipe std I/O data relayed from target (default: console)")
 args = parser.parse_args()
 
 monitor = None
 active_mode = False
 
-# TODO: make configurable via the interface + config file
-#CONSOLE_FILE = sys.stdout
-CONSOLE_FILE = open('console', "w")
+if args.stdio is not None:
+    CONSOLE_FILE = open(args.stdio, "w")
+else:
+    CONSOLE_FILE = sys.stdout
 
 def to_int(s):
     if s.startswith("0x"):
