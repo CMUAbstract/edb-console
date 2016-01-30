@@ -3,4 +3,4 @@
 ROOT=$(dirname $0)
 export PYTHONPATH=$ROOT/ext/pyedb
 
-$ROOT/edb.py
+$ROOT/edb.py "$@"

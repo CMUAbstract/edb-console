@@ -6,8 +6,15 @@ import os
 import time
 import atexit
 import readline # loading this causes raw_input to offer a rich prompt
+import argparse
 
 from pyedb import edb
+
+parser = argparse.ArgumentParser(
+            description="EDB Console")
+parser.add_argument('--command', '-c',
+            help="Run the given command and exit")
+args = parser.parse_args()
 
 monitor = None
 active_mode = False
@@ -258,14 +265,20 @@ except IOError:
 atexit.register(readline.write_history_file, cmd_hist_file)
 
 while True:
-    try:
-        line = input(compose_prompt(active_mode))
-    except EOFError:
-        print() # print a newline to be nice to the shell
-        break
-    except KeyboardInterrupt:
-        print() # move to next line
-        continue
+
+    if args.command is not None:
+        once = True
+        line = args.command
+    else: # read from stdin
+        once = False
+        try:
+            line = input(compose_prompt(active_mode))
+        except EOFError:
+            print() # print a newline to be nice to the shell
+            break
+        except KeyboardInterrupt:
+            print() # move to next line
+            continue
 
     line = line.strip()
     if len(line) == 0: # new-line character only (blank command)
@@ -282,3 +295,6 @@ while True:
     except Exception as e:
         print(type(e))
         print(traceback.format_exc())
+
+    if once:
+        break
