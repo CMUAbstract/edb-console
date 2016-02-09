@@ -211,9 +211,9 @@ def cmd_read(mon, addr, len):
     addr = int(addr, 16)
     len = int(len)
     addr, value = mon.read_mem(addr, len)
-    print("0x%08x:" % addr, end='')
+    print("%08x: " % addr, end='')
     for byte in value:
-        print("0x%02x" % byte, end='')
+        print("%02x " % byte, end='')
     print()
 
 def cmd_write(mon, addr, *value):
