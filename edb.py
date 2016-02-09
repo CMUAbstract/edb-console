@@ -69,9 +69,9 @@ def cmd_echo(mon, args):
 def cmd_sleep(mon, time_sec):
     time.sleep(float(time_sec))
 
-def cmd_attach(mon, uart_log_fname=None):
+def cmd_attach(mon, device='/dev/ttyUSB0', uart_log_fname=None):
     global monitor
-    monitor = edb.EDB(uart_log_fname=uart_log_fname)
+    monitor = edb.EDB(device=device, uart_log_fname=uart_log_fname)
 
 def cmd_detach(mon):
     mon.destroy()
