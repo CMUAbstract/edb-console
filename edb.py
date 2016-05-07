@@ -242,10 +242,21 @@ def cmd_lget(mon, param):
     print(mon.get_local_param(param))
 
 def cmd_rset(mon, param, value):
-    print(mon.set_remote_param(param, value))
+    param_type = mon.get_remote_param_type(param)
+    typed_value = param_type.from_string(value)
+    print(mon.set_remote_param(param, typed_value))
 
 def cmd_rget(mon, param):
     print(mon.get_remote_param(param))
+
+# TODO: support make options in all commands, then merge these with rset/rget cmds
+def cmd_rsetraw(mon, param, value):
+    param_type = mon.get_remote_param_type(param)
+    typed_value = param_type.from_edb_repr(mon, value)
+    print(mon.set_remote_param(param, typed_value).to_edb_repr(mon))
+
+def cmd_rgetraw(mon, param):
+    print(mon.get_remote_param(param).to_edb_repr(mon))
 
 def cmd_uart(mon, op):
     enable = "enable".startswith(op)
