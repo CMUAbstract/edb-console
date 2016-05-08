@@ -74,11 +74,21 @@ class Command:
 CMD_HANDLER_FUNC_PREFIX = "cmd_"
 CMD_PARSER_FUNC_PREFIX = "parser_"
 
+class CommandNotFoundException(Exception):
+    def __init__(self, name):
+        self.name = name
+
+class DebuggerNotAttachedException(Exception):
+    pass
+
 def lookup_cmd(name):
-    glob = globals()
-    parser = glob[CMD_PARSER_FUNC_PREFIX + name]()
-    handler = glob[CMD_HANDLER_FUNC_PREFIX + name]
-    return Command(name, parser, handler)
+    try:
+        glob = globals()
+        parser = glob[CMD_PARSER_FUNC_PREFIX + name]()
+        handler = glob[CMD_HANDLER_FUNC_PREFIX + name]
+        return Command(name, parser, handler)
+    except KeyError:
+        raise CommandNotFoundException(name)
 
 def lookup_all_cmds():
 
@@ -108,7 +118,7 @@ def eval_toggle_arg(state):
 
 def check_attached(mon):
     if mon is None:
-        raise Exception("Not connected to debugger: run 'attach' command.")
+        raise DebuggerNotAttachedException()
 
 
 def parser_help():
@@ -561,6 +571,12 @@ while True:
             cmd_args = tokens[1:]
             cmd = lookup_cmd(cmd_name)
             cmd.handler(monitor, cmd.parser.parse_args(cmd_args))
+
+    except CommandNotFoundException as e:
+        print("Unrecognized command: '" + e.name + "'. Try 'help'.")
+
+    except DebuggerNotAttachedException:
+        print("Not connected to debugger: run 'attach' command.")
 
     except Exception as e:
         print(type(e))
