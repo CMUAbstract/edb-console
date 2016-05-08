@@ -179,7 +179,7 @@ def parser_power():
 
 def cmd_power(mon, args):
     check_attached(mon)
-    mon.cont_power(args.state == "on")
+    mon.cont_power(args.action == "on")
 
 def parser_sense():
     parser = argparse.ArgumentParser(prog="sense",
@@ -315,13 +315,14 @@ def parser_break():
     add_toggle_arg(parser, "breakpoint")
     parser.add_argument('--voltage', type=float,
                         help="make this an code-energy breakpoint with the given voltage level (V)")
-    parser.add_argument('--type', choices=edb.EDB.get_breakpoint_types(), type=str.upper,
+    parser.add_argument('--type', choices=edb.EDB.get_breakpoint_types(),
+                        default='EXTERNAL', type=str.upper,
                         help="breakpoint type (impl. variant)")
     return parser
 
 def cmd_break(mon, args):
     check_attached(mon)
-    mon.toggle_breakpoint(args.type, args.idx, eval_toggle_arg(args.state), args.energy_level)
+    mon.toggle_breakpoint(args.type, args.idx, eval_toggle_arg(args.state), args.voltage)
 
 def parser_watch():
     parser = argparse.ArgumentParser(prog="watch",
@@ -391,13 +392,13 @@ def cmd_intctx(mon, args):
     int_context = mon.get_interrupt_context(args.source)
     print_interrupt_context(int_context)
 
-def add_addr_arg():
+def add_addr_arg(parser):
     parser.add_argument('addr', type=to_int, help="memory address(hex)")
 
 def parser_read():
     parser = argparse.ArgumentParser(prog="read",
                 description="Read content of memory on the target device")
-    add_addr_arg()
+    add_addr_arg(parser)
     parser.add_argument('len', type=int, help="number of bytes to read")
     return parser
 
@@ -412,7 +413,7 @@ def cmd_read(mon, args):
 def parser_write():
     parser = argparse.ArgumentParser(prog="write",
                 description="Write content to memory on the target device")
-    add_addr_arg()
+    add_addr_arg(parser)
     parser.add_argument('value', nargs='+', type=to_int,
                         help="array of bytes to write (space-separated)")
     return parser
