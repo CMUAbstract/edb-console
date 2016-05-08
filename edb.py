@@ -7,6 +7,7 @@ import time
 import atexit
 import readline # loading this causes raw_input to offer a rich prompt
 import argparse
+import re
 
 from pyedb import edb
 
@@ -63,76 +64,203 @@ def init_watchpoint_log(fout):
 def log_watchpoint_event(fout, event):
     fout.write("%u,%.6f,%.4f\n" %  (event.id, event.timestamp, event.vcap))
 
+class Command:
+    def __init__(self, name, parser, handler):
+        self.name = name
+        self.parser = parser
+        self.handler = handler
+        self.description = parser.description
+
+CMD_HANDLER_FUNC_PREFIX = "cmd_"
+CMD_PARSER_FUNC_PREFIX = "parser_"
+
+def lookup_cmd(name):
+    glob = globals()
+    parser = glob[CMD_PARSER_FUNC_PREFIX + name]()
+    handler = glob[CMD_HANDLER_FUNC_PREFIX + name]
+    return Command(name, parser, handler)
+
+def lookup_all_cmds():
+
+    cmds = []
+
+    glob = globals()
+    for var in glob:
+        m = re.match(r'^' + CMD_HANDLER_FUNC_PREFIX + r'(?P<cmd_name>.*)', var)
+        if m is None:
+            continue
+        cmd_name = m.group('cmd_name')
+
+        # guard against coincidences in function names
+        if CMD_PARSER_FUNC_PREFIX + cmd_name not in glob:
+            continue
+
+        cmd = lookup_cmd(cmd_name)
+        cmds.append(cmd)
+
+    return sorted(cmds, key=lambda cmd: cmd.name)
+
+def add_toggle_arg(parser, state_details):
+    parser.add_argument('state', choices=['E', 'D'], type=str.upper,
+                        help=state_details + " state to apply (E|D)")
+def eval_toggle_arg(state):
+    return state == "E"
+
+def check_attached(mon):
+    if mon is None:
+        raise Exception("Not connected to debugger: run 'attach' command.")
+
+
+def parser_help():
+    parser = argparse.ArgumentParser(prog="help",
+                description="Display a list of commands")
+    return parser
+
+def cmd_help(mon, args):
+    print("Run a command with --help to see its usage information")
+    cmds = lookup_all_cmds()
+    for cmd in cmds:
+        print("%16s : %s" % (cmd.name, cmd.description))
+        print("%16s   %s" % ("", cmd.parser.format_usage()))
+
+def parser_echo():
+    parser = argparse.ArgumentParser(prog="echo",
+                description="A test command that prints its input arg")
+    parser.add_argument('value', help="a string to echo back")
+    return parser
+
 def cmd_echo(mon, args):
-    print(args)
+    print(args.value)
 
-def cmd_sleep(mon, time_sec):
-    time.sleep(float(time_sec))
+def parser_sleep():
+    parser = argparse.ArgumentParser(prog="sleep",
+                description="Sleep for a designated number of seconds")
+    parser.add_argument('time_sec', help="time to sleep (seconds)")
+    return parser
 
-def cmd_attach(mon, device='/dev/ttyUSB0', uart_log_fname=None):
+def cmd_sleep(mon, args):
+    time.sleep(float(args.time_sec))
+
+def parser_attach():
+    parser = argparse.ArgumentParser(prog="attach",
+                description="Connect to the debugger device over TTY USB")
+    parser.add_argument('--device', '-d', help="device file", default='/dev/ttyUSB0')
+    parser.add_argument('--uart-log', '-l', help="file to where to log bytes received over UART")
+    return parser
+
+def cmd_attach(mon, args):
     global monitor
-    monitor = edb.EDB(device=device, uart_log_fname=uart_log_fname)
+    monitor = edb.EDB(device=args.device, uart_log_fname=args.uart_log)
 
-def cmd_detach(mon):
+def parser_detach():
+    parser = argparse.ArgumentParser(prog="detach",
+                description="Disconnect from the debugger device")
+    return parser
+
+def cmd_detach(mon, args):
+    check_attached(mon)
     mon.destroy()
 
-def cmd_power(mon, state):
-    mon.cont_power(state == "on")
+def parser_power():
+    parser = argparse.ArgumentParser(prog="power",
+                description="Turn on/off continuous power to the target device")
+    parser.add_argument('action', choices=['on', 'off'], help="power state to set")
+    return parser
 
-def cmd_sense(mon, channel):
-    print(mon.sense(channel.upper()))
+def cmd_power(mon, args):
+    check_attached(mon)
+    mon.cont_power(args.state == "on")
 
-def cmd_reset(mon):
+def parser_sense():
+    parser = argparse.ArgumentParser(prog="sense",
+                description="Sample voltage on an ADC channel")
+    parser.add_argument('channel', type=str.upper,
+                        help="ADC channel which to sample",
+                        choices=edb.EDB.get_adc_channels())
+    return parser
+
+def cmd_sense(mon, args):
+    check_attached(mon)
+    print(mon.sense(args.channel))
+
+def parser_reset():
+    parser = argparse.ArgumentParser(prog="reset",
+                description="Reset the state machine that tracks debug mode state")
+    return parser
+
+def cmd_reset(mon, args):
+    check_attached(mon)
     mon.reset_debug_mode_state()
 
-def do_stream(mon, out_file, duration_sec, streams, no_parse):
-    if duration_sec == "-":
-        duration_sec = None # stream indefinitely
-    else:
-        duration_sec = float(duration_sec)
+def parser_stream():
+    parser = argparse.ArgumentParser(prog="stream",
+                description="Collect a stream of energy or program events " +
+                            "(Ctrl-C to interrupt)")
+    parser.add_argument('streams', nargs='+', choices=edb.EDB.get_streams(),
+                        type=str.upper, help="event types to collect")
+    parser.add_argument('--duration_sec', '-d', type=float,
+                        help="how long to collect the trace for (sec)")
+    parser.add_argument('--out-file', '-o', help="file where to save the trace")
+    parser.add_argument('--no-parse', action='store_true',
+                        help="disable packet parsing (for debugging)")
+    return parser
 
-    streams = [str.upper(s) for s in streams]
-
-    if out_file == "-":
+def cmd_stream(mon, args):
+    check_attached(mon)
+    if args.out_file is None:
         fp = sys.stdout
         silent = True
     else:
-        fp = open(out_file, "w")
+        fp = open(args.out_file, "w")
         silent = False
 
     try:
-        mon.stream(streams, duration_sec=duration_sec, out_file=fp,
-                   silent=silent, no_parse=no_parse)
+        mon.stream(args.streams, duration_sec=args.duration_sec, out_file=fp,
+                   silent=silent, no_parse=args.no_parse)
     except KeyboardInterrupt:
         pass # this is a clean termination
 
-def cmd_stream(mon, out_file, duration_sec, *streams):
-    do_stream(mon, out_file, duration_sec, streams=streams, no_parse=False)
+def parser_charge():
+    parser = argparse.ArgumentParser(prog="charge",
+                description="Set energy level of target device up to given voltage")
+    parser.add_argument('voltage', help="voltage to charge capacitor to (V)")
+    parser.add_argument('--method', '-m', help="implementation variant",
+                        type=str.upper, choices=['ADC', 'CMP'], default='ADC')
+    return parser
 
-def cmd_streamnp(mon, out_file, duration_sec, *streams):
-    do_stream(mon, out_file, duration_sec, streams=streams, no_parse=True)
-
-def cmd_charge(mon, target_voltage, method="adc"):
-    target_voltage = float(target_voltage)
-    if method == "adc":
+def cmd_charge(mon, args):
+    check_attached(mon)
+    target_voltage = float(args.target_voltage)
+    if args.method == "ADC":
         vcap = mon.charge(target_voltage)
         print("Vcap = %.4f" % vcap)
-    elif method == "cmp":
+    elif args.method == "CMP":
         mon.charge_cmp(target_voltage)
-    else:
-        raise Exception("Invalid charger method: " + method)
 
-def cmd_discharge(mon, target_voltage, method="adc"):
-    target_voltage = float(target_voltage)
-    if method == "adc":
+def parser_discharge():
+    parser = argparse.ArgumentParser(prog="discharge",
+                description="Set energy level of target device down to a given voltage")
+    parser.add_argument('voltage', help="voltage to discharge capacitor to (V)")
+    parser.add_argument('--method', '-m', help="implementation variant",
+                        type=str.upper, choices=['ADC', 'CMP'], default='ADC')
+    return parser
+
+def cmd_discharge(mon, args):
+    check_attached(mon)
+    target_voltage = float(args.target_voltage)
+    if args.method == "adc":
         vcap = mon.discharge(target_voltage)
         print("Vcap = %.4f" % vcap)
-    elif method == "cmp":
+    elif args.method == "cmp":
         mon.discharge_cmp(target_voltage)
-    else:
-        raise Exception("Invalid charger method: " + method)
 
-def cmd_int(mon):
+def parser_int():
+    parser = argparse.ArgumentParser(prog="int",
+                description="Interrupt target device and enter interactive debug shell")
+    return parser
+
+def cmd_int(mon, args):
+    check_attached(mon)
     global active_mode
     try:
         saved_vcap = mon.interrupt()
@@ -141,38 +269,77 @@ def cmd_int(mon):
     except KeyboardInterrupt:
         pass
 
-def cmd_cont(mon):
+def parser_cont():
+    parser = argparse.ArgumentParser(prog="cont",
+                description="Resume program execution")
+    return parser
+
+def cmd_cont(mon, args):
+    check_attached(mon)
     global active_mode
     restored_vcap = mon.exit_debug_mode()
     print("Vcap_restored = %.4f" % restored_vcap)
     active_mode = False
 
-def cmd_ebreak(mon, target_voltage, impl="adc"):
+def parser_ebreak():
+    parser = argparse.ArgumentParser(prog="ebreak",
+                description="Set an energy-breakpoint")
+    parser.add_argument('voltage', help="voltage level at which to interrupt")
+    parser.add_argument('--method', '-m', help="implementation variant",
+                        type=str.upper, choices=['ADC', 'CMP'], default='ADC')
+    return parser
+
+def cmd_ebreak(mon, args):
+    check_attached(mon)
     global active_mode
-    target_voltage = float(target_voltage)
-    saved_vcap = mon.break_at_vcap_level(target_voltage, impl.upper())
+    target_voltage = float(args.target_voltage)
+    saved_vcap = mon.break_at_vcap_level(target_voltage, args.method)
     print("Vcap_saved = %.4f" % saved_vcap)
     active_mode = True
 
-def cmd_break(mon, type, idx, op, energy_level=None):
-    idx = int(idx)
-    enable = "enable".startswith(op)
-    type = match_keyword(type.upper(), edb.host_comm_header.enums['BREAKPOINT_TYPE'].keys())
-    energy_level = float(energy_level) if energy_level is not None else None
-    mon.toggle_breakpoint(type, idx, enable, energy_level)
+def parser_break():
+    parser = argparse.ArgumentParser(prog="break",
+                description="Toggle a code or code-energy breakpoint")
+    parser.add_argument('idx', type=int,
+                        help="breakpoint index (must match the macro in app source code)")
+    add_toggle_arg(parser, "breakpoint")
+    parser.add_argument('--voltage', type=float,
+                        help="make this an code-energy breakpoint with the given voltage level (V)")
+    parser.add_argument('--type', choices=edb.EDB.get_breakpoint_types(), type=str.upper,
+                        help="breakpoint type (impl. variant)")
+    return parser
 
-def cmd_watch(mon, idx, op, vcap_snapshot="novcap"):
-    idx = int(idx)
-    enable = "enable".startswith(op)
-    vcap_snapshot = "vcap".startswith(vcap_snapshot)
-    mon.toggle_watchpoint(idx, enable, vcap_snapshot)
+def cmd_break(mon, args):
+    check_attached(mon)
+    mon.toggle_breakpoint(args.type, args.idx, eval_toggle_arg(args.state), args.energy_level)
 
-def cmd_wait(mon, log_file=None):
-    """Wait to enter active debug mode"""
+def parser_watch():
+    parser = argparse.ArgumentParser(prog="watch",
+                description="Toggle a code or code-energy watchpoint")
+    parser.add_argument('idx', type=int,
+                        help="watchpoint index (must match the macro in app source code)")
+    add_toggle_arg(parser, "watchpoint")
+    parser.add_argument('--energy', action='store_true',
+                        help="snapshot energy at the watchpoint location")
+    return parser
+
+def cmd_watch(mon, args):
+    check_attached(mon)
+    mon.toggle_watchpoint(args.idx, eval_toggle_arg(args.state), args.energy)
+
+def parser_wait():
+    parser = argparse.ArgumentParser(prog="wait",
+                description="Wait for a breakpoint and enter active debug mode or collect printf output")
+    parser.add_argument('--log-file', '-l',
+                        help="filename where to log printf output")
+    return parser
+
+def cmd_wait(mon, args):
+    check_attached(mon)
     global active_mode
 
-    if log_file is not None:
-        flog = open(log_file, "w")
+    if args.log_file is not None:
+        flog = open(args.log_file, "w")
         init_watchpoint_log(flog)
     else:
         flog = None
@@ -202,69 +369,156 @@ def cmd_wait(mon, log_file=None):
     except KeyboardInterrupt:
         pass
 
-def cmd_intctx(mon, source="debugger"):
-    source = match_keyword(source.upper(), edb.host_comm_header.enums['INTERRUPT_SOURCE'])
-    int_context = mon.get_interrupt_context(source)
+def parser_intctx():
+    parser = argparse.ArgumentParser(prog="intctx",
+                description="Show context of the interrupt that triggered current debug session")
+    parser.add_argument('--source', '-s', choices=edb.EDB.get_interrupt_sources(), type=str.upper,
+                        default='DEBUGGER', help="where to fetch the interrupt context from")
+    return parser
+
+def cmd_intctx(mon, args):
+    check_attached(mon)
+    int_context = mon.get_interrupt_context(args.source)
     print_interrupt_context(int_context)
 
-def cmd_read(mon, addr, len):
-    addr = int(addr, 16)
-    len = int(len)
-    addr, value = mon.read_mem(addr, len)
+def add_addr_arg():
+    parser.add_argument('addr', type=to_int, help="memory address(hex)")
+
+def parser_read():
+    parser = argparse.ArgumentParser(prog="read",
+                description="Read content of memory on the target device")
+    add_addr_arg()
+    parser.add_argument('len', type=int, help="number of bytes to read")
+    return parser
+
+def cmd_read(mon, args):
+    check_attached(mon)
+    addr, value = mon.read_mem(args.addr, args.len)
     print("%08x: " % addr, end='')
     for byte in value:
         print("%02x " % byte, end='')
     print()
 
-def cmd_write(mon, addr, *value):
-    addr = int(addr, 16)
-    value = map(to_int, value)
-    mon.write_mem(addr, value)
+def parser_write():
+    parser = argparse.ArgumentParser(prog="write",
+                description="Write content to memory on the target device")
+    add_addr_arg()
+    parser.add_argument('value', nargs='+', type=to_int,
+                        help="array of bytes to write (space-separated)")
+    return parser
 
-def cmd_pc(mon):
+def cmd_write(mon, addr, *value):
+    check_attached(mon)
+    mon.write_mem(args.addr, args.value)
+
+def parser_pc():
+    parser = argparse.ArgumentParser(prog="pc",
+                description="Get program counter from target device")
+    return parser
+
+def cmd_pc(mon, args):
+    check_attached(mon)
     print("0x%08x" % mon.get_pc())
 
-def cmd_secho(mon, value):
-    value = int(value, 16)
-    print("0x%02x" % mon.serial_echo(value))
+def parser_eecho():
+    parser = argparse.ArgumentParser(prog="eecho",
+                description="Echo value from EDB or target device (for debugging)")
+    parser.add_argument('source', choices=['SERIAL', 'DMA'], type=str.upper,
+                        help="what code path to test")
+    parser.add_argument('value', type=to_int, help="value to echo back")
+    return parser
 
-def cmd_decho(mon, value):
-    value = int(value, 16)
-    print("0x%02x" % mon.dma_echo(value))
+def cmd_eecho(mon, value):
+    check_attached(mon)
+    if args.source == "SERIAL":
+        print("0x%02x" % mon.serial_echo(value))
+    elif args.source == "DMA":
+        print("0x%02x" % mon.dma_echo(value))
 
-def cmd_replay(mon, file):
-    mon.load_replay_log(file)
+def parser_replay():
+    parser = argparse.ArgumentParser(prog="replay",
+                description="Load UART log for replaying (for debugging)")
+    parser.add_argument('log_file', help="file with the recorded uart log")
+    return parser
 
-def cmd_lset(mon, param, value):
-    print(mon.set_local_param(param, value))
+def cmd_replay(mon, args):
+    mon.load_replay_log(args.log_file)
 
-def cmd_lget(mon, param):
-    print(mon.get_local_param(param))
+def add_param_args(parser):
+    parser.add_argument('param', help="parameter name")
+    parser.add_argument('--owner', choices=['HOST', 'EDB'], default='EDB',
+                        help="entity that owns the parameter")
+    parser.add_argument('--raw', action='store_true',
+                        help="disable type conversions for value (in/out in raw representation)")
 
-def cmd_rset(mon, param, value):
-    param_type = mon.get_remote_param_type(param)
-    typed_value = param_type.from_string(value)
-    print(mon.set_remote_param(param, typed_value))
+def parser_set():
+    parser = argparse.ArgumentParser(prog="set",
+                description="Set value of a parameter")
+    add_param_args(parser)
+    parser.add_argument('value', help="value to set parameter to")
+    return parser
 
-def cmd_rget(mon, param):
-    print(mon.get_remote_param(param))
+def cmd_set(mon, args):
+    check_attached(mon)
+    if args.owner == "HOST":
+        print(mon.set_local_param(args.param, args.value))
 
-# TODO: support make options in all commands, then merge these with rset/rget cmds
-def cmd_rsetraw(mon, param, value):
-    param_type = mon.get_remote_param_type(param)
-    typed_value = param_type.from_edb_repr(mon, value)
-    print(mon.set_remote_param(param, typed_value).to_edb_repr(mon))
+    elif args.owner == "EDB":
 
-def cmd_rgetraw(mon, param):
-    print(mon.get_remote_param(param).to_edb_repr(mon))
+        param_type = mon.get_remote_param_type(args.param)
+        if args.raw:
+            typed_value = param_type.from_edb_repr(mon, args.value)
+        else:
+            typed_value = param_type.from_string(args.value)
 
-def cmd_uart(mon, op):
-    enable = "enable".startswith(op)
-    mon.enable_target_uart(enable)
+        set_value = mon.set_remote_param(args.param, typed_value)
 
-def cmd_payload(mon, op):
-    enable = "enable".startswith(op)
-    mon.enable_periodic_payload(enable)
+        if args.raw:
+            print(set_value.to_edb_repr(mon))
+        else:
+            print(set_value)
+
+
+def parser_get():
+    parser = argparse.ArgumentParser(prog="get",
+                description="Get the value of a parameter")
+    add_param_args(parser)
+    return parser
+
+def cmd_get(mon, args):
+    check_attached(mon)
+    if args.owner == "HOST":
+        print(mon.get_local_param(args.param))
+    elif args.owner == "EDB":
+        value = mon.get_remote_param(args.param)
+        if args.raw:
+            print(value.to_edb_repr(mon))
+        else:
+            print(value)
+
+def parser_uart():
+    parser = argparse.ArgumentParser(prog="uart",
+                description="Toggle UART on EDB side")
+    parser.add_argument('state', choices=['E', 'D'], type=str.upper,
+                        help="state into which to set the UART")
+    parser.add_argument('state', choices=['E', 'D'], type=str.upper,
+                        help="state to apply")
+    add_toggle_arg(parser, "UART")
+    return parser
+
+def cmd_uart(mon, args):
+    check_attached(mon)
+    mon.enable_target_uart(eval_toggle_arg(args.state))
+
+def parser_payload():
+    parser = argparse.ArgumentParser(prog="payload",
+                description="Enable periodic sending of payload (EDBSat)")
+    add_toggle_arg(parser, "periodic-send")
+    return parser
+
+def cmd_payload(mon, args):
+    check_attached(mon)
+    mon.enable_periodic_payload(eval_toggle_arg(args.state))
 
 def compose_prompt(active_mode):
     if active_mode:
@@ -303,12 +557,17 @@ while True:
     try:
         for cmd_line in cmd_lines:
             tokens = cmd_line.split()
-            cmd = tokens[0]
-            glob = globals()
-            glob["cmd_" + cmd](monitor, *tokens[1:])
+            cmd_name = tokens[0]
+            cmd_args = tokens[1:]
+            cmd = lookup_cmd(cmd_name)
+            cmd.handler(monitor, cmd.parser.parse_args(cmd_args))
+
     except Exception as e:
         print(type(e))
         print(traceback.format_exc())
+
+    except SystemExit: # prevent parse_args from exiting on '--help' or usage
+        pass
 
     if once:
         break
