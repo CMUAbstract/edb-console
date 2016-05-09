@@ -240,7 +240,7 @@ def parser_charge():
 
 def cmd_charge(mon, args):
     check_attached(mon)
-    target_voltage = float(args.target_voltage)
+    target_voltage = float(args.voltage)
     if args.method == "ADC":
         vcap = mon.charge(target_voltage)
         print("Vcap = %.4f" % vcap)
@@ -257,11 +257,11 @@ def parser_discharge():
 
 def cmd_discharge(mon, args):
     check_attached(mon)
-    target_voltage = float(args.target_voltage)
-    if args.method == "adc":
+    target_voltage = float(args.voltage)
+    if args.method == "ADC":
         vcap = mon.discharge(target_voltage)
         print("Vcap = %.4f" % vcap)
-    elif args.method == "cmp":
+    elif args.method == "CMP":
         mon.discharge_cmp(target_voltage)
 
 def parser_int():
