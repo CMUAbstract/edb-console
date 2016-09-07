@@ -482,13 +482,9 @@ def cmd_set(mon, args):
         else:
             typed_value = param_type.from_string(args.value)
 
-        set_value = mon.set_remote_param(args.param, typed_value)
-
-        if args.raw:
-            print(set_value.to_edb_repr(mon))
-        else:
-            print(set_value)
-
+        rc = mon.set_remote_param(args.param, typed_value)
+        if rc != 0:
+            raise Exception("Set param failed: rc " + str(rc))
 
 def parser_get():
     parser = argparse.ArgumentParser(prog="get",
