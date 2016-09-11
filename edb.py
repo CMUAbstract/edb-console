@@ -418,7 +418,7 @@ def parser_write():
                         help="array of bytes to write (space-separated)")
     return parser
 
-def cmd_write(mon, addr, *value):
+def cmd_write(mon, args):
     check_attached(mon)
     mon.write_mem(args.addr, args.value)
 
