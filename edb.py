@@ -267,13 +267,15 @@ def cmd_discharge(mon, args):
 def parser_int():
     parser = argparse.ArgumentParser(prog="int",
                 description="Interrupt target device and enter interactive debug shell")
+    parser.add_argument('--power', '-p', help="whether to supply power to target",
+                        action='store_true')
     return parser
 
 def cmd_int(mon, args):
     check_attached(mon)
     global active_mode
     try:
-        saved_vcap = mon.interrupt()
+        saved_vcap = mon.interrupt(args.power)
         print("Vcap_saved = %.4f" % saved_vcap)
         active_mode = True
     except KeyboardInterrupt:
